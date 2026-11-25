@@ -45,6 +45,10 @@ public class RdsUtilsTests {
       "custom-test-name.cluster-custom-XYZ.us-east-2.rds.amazonaws.com";
   private static final String usEastRegionLimitlessDbShardGroup =
       "database-test-name.shardgrp-XYZ.us-east-2.rds.amazonaws.com";
+  private static final String usEastRegionProxyMixedCase =
+      "proxy-test-name.PROXY-XYZ.us-east-2.rds.amazonaws.com";
+  private static final String usEastRegionCustomDomainMixedCase =
+      "custom-test-name.CLUSTER-CUSTOM-XYZ.us-east-2.rds.amazonaws.com";
 
   private static final String euRedshift =
       "redshift-test-name.XYZ.eusc-de-east-1.rds.amazonaws.eu";
@@ -494,6 +498,18 @@ public class RdsUtilsTests {
   public void testisRdsProxyEndpointDns() {
     assertFalse(target.isRdsProxyEndpointDns(usEastRegionProxy));
     assertTrue(target.isRdsProxyEndpointDns(usEastRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testMixedCaseProxyDns() {
+    assertTrue(target.isRdsProxyDns(usEastRegionProxyMixedCase));
+    assertEquals(RdsUrlType.RDS_PROXY, target.identifyRdsType(usEastRegionProxyMixedCase));
+  }
+
+  @Test
+  public void testMixedCaseCustomClusterDns() {
+    assertTrue(target.isRdsCustomClusterDns(usEastRegionCustomDomainMixedCase));
+    assertEquals(RdsUrlType.RDS_CUSTOM_CLUSTER, target.identifyRdsType(usEastRegionCustomDomainMixedCase));
   }
 
   @Test

@@ -249,7 +249,7 @@ public class RdsUtils {
 
   public boolean isRdsCustomClusterDns(final String host) {
     final String dnsGroup = getDnsGroup(getPreparedHost(host));
-    return dnsGroup != null && dnsGroup.startsWith("cluster-custom-");
+    return dnsGroup != null && dnsGroup.equalsIgnoreCase("cluster-custom-");
   }
 
   public boolean isRdsDns(final String host) {
@@ -270,7 +270,7 @@ public class RdsUtils {
 
   public boolean isRdsProxyDns(final String host) {
     final String dnsGroup = getDnsGroup(getPreparedHost(host));
-    return dnsGroup != null && dnsGroup.startsWith("proxy-");
+    return dnsGroup != null && dnsGroup.equalsIgnoreCase("proxy-");
   }
 
   public boolean isRdsProxyEndpointDns(final String host) {
