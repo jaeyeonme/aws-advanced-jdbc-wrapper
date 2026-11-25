@@ -199,8 +199,6 @@ public class RdsUtils {
               + "(?<domain>[a-zA-Z0-9]+\\.global\\.rds\\.amazonaws\\.com\\.?)$",
           Pattern.CASE_INSENSITIVE);
 
-  // The lookups below, except isRdsProxyEndpointDns(), match against this one list. They share cachedPatterns,
-  // so a match cached by one of them must mean the same thing to the others.
   private static final Pattern[] RDS_DNS_PATTERNS = {
       AURORA_DNS_PATTERN,
       AURORA_CHINA_DNS_PATTERN,
@@ -232,8 +230,15 @@ public class RdsUtils {
               + "\\.rds\\.amazonaws\\.com\\.cn\\.?)$",
           Pattern.CASE_INSENSITIVE);
 
-  private static final Map<String, Matcher> cachedPatterns = new ConcurrentHashMap<>();
-  private static final Map<String, String> cachedDnsPatterns = new ConcurrentHashMap<>();
+  private static final Pattern[] RDS_PROXY_ENDPOINT_PATTERNS = {
+      RDS_PROXY_ENDPOINT_DNS_PATTERN,
+      RDS_PROXY_ENDPOINT_CHINA_DNS_PATTERN,
+      RDS_PROXY_ENDPOINT_OLD_CHINA_DNS_PATTERN};
+
+  // One cache per pattern list, so a result is only ever read by lookups that use the same patterns. Hosts that
+  // match nothing are cached as HostMatch.NO_MATCH. The maps are unbounded.
+  private static final Map<String, HostMatch> rdsDnsMatches = new ConcurrentHashMap<>();
+  private static final Map<String, HostMatch> rdsProxyEndpointMatches = new ConcurrentHashMap<>();
 
   private static final String INSTANCE_GROUP = "instance";
   private static final String DNS_GROUP = "dns";
@@ -253,14 +258,7 @@ public class RdsUtils {
   }
 
   public boolean isRdsDns(final String host) {
-    final String preparedHost = getPreparedHost(host);
-    final Matcher matcher = cacheMatcher(preparedHost, RDS_DNS_PATTERNS);
-    final String group = getRegexGroup(matcher, DNS_GROUP);
-    if (group != null) {
-      cachedDnsPatterns.put(preparedHost, group);
-    }
-
-    return matcher != null;
+    return getRdsDnsMatch(getPreparedHost(host)) != HostMatch.NO_MATCH;
   }
 
   public boolean isRdsInstance(final String host) {
@@ -279,13 +277,8 @@ public class RdsUtils {
       return false;
     }
 
-    final Matcher matcher = cacheMatcher(preparedHost,
-        RDS_PROXY_ENDPOINT_DNS_PATTERN, RDS_PROXY_ENDPOINT_CHINA_DNS_PATTERN, RDS_PROXY_ENDPOINT_OLD_CHINA_DNS_PATTERN);
-    if (getRegexGroup(matcher, DNS_GROUP) != null) {
-      return getRegexGroup(matcher, INSTANCE_GROUP) != null;
-    }
-
-    return false;
+    final HostMatch match = getRdsProxyEndpointMatch(preparedHost);
+    return match.dns != null && match.instance != null;
   }
 
   public @Nullable String getRdsClusterId(final String host) {
@@ -294,12 +287,8 @@ public class RdsUtils {
       return null;
     }
 
-    final Matcher matcher = cacheMatcher(preparedHost, RDS_DNS_PATTERNS);
-    if (getRegexGroup(matcher, DNS_GROUP) != null) {
-      return getRegexGroup(matcher, INSTANCE_GROUP);
-    }
-
-    return null;
+    final HostMatch match = getRdsDnsMatch(preparedHost);
+    return match.dns != null ? match.instance : null;
   }
 
   public @Nullable String getRdsInstanceId(final String host) {
@@ -308,12 +297,8 @@ public class RdsUtils {
       return null;
     }
 
-    final Matcher matcher = cacheMatcher(preparedHost, RDS_DNS_PATTERNS);
-    if (getRegexGroup(matcher, DNS_GROUP) == null) {
-      return getRegexGroup(matcher, INSTANCE_GROUP);
-    }
-
-    return null;
+    final HostMatch match = getRdsDnsMatch(preparedHost);
+    return match.dns == null ? match.instance : null;
   }
 
   public String getRdsInstanceHostPattern(final String host) {
@@ -322,9 +307,8 @@ public class RdsUtils {
       return "?";
     }
 
-    final Matcher matcher = cacheMatcher(preparedHost, RDS_DNS_PATTERNS);
-    final String group = getRegexGroup(matcher, DOMAIN_GROUP);
-    return group == null ? "?" : "?." + group;
+    final String domain = getRdsDnsMatch(preparedHost).domain;
+    return domain == null ? "?" : "?." + domain;
   }
 
   public @Nullable String getRdsRegion(final String host) {
@@ -333,10 +317,9 @@ public class RdsUtils {
       return null;
     }
 
-    final Matcher matcher = cacheMatcher(preparedHost, RDS_DNS_PATTERNS);
-    final String group = getRegexGroup(matcher, REGION_GROUP);
-    if (group != null) {
-      return group;
+    final String region = getRdsDnsMatch(preparedHost).region;
+    if (region != null) {
+      return region;
     }
 
     final Matcher elbMatcher = ELB_PATTERN.matcher(preparedHost);
@@ -504,30 +487,46 @@ public class RdsUtils {
     return host.replace(prefix + ".", ".");
   }
 
-  private @Nullable Matcher cacheMatcher(final String host, Pattern... patterns) {
-    Matcher matcher;
-    for (Pattern pattern : patterns) {
-      matcher = cachedPatterns.get(host);
-      if (matcher != null) {
-        return matcher;
-      }
-      matcher = pattern.matcher(host);
-      if (matcher.find()) {
-        cachedPatterns.put(host, matcher);
-        return matcher;
-      }
-    }
-    return null;
+  private static HostMatch getRdsDnsMatch(final String host) {
+    return getHostMatch(rdsDnsMatches, host, RDS_DNS_PATTERNS);
   }
 
-  private @Nullable String getRegexGroup(@Nullable Matcher matcher, String groupName) {
-    if (matcher == null) {
-      return null;
-    }
+  private static HostMatch getRdsProxyEndpointMatch(final String host) {
+    return getHostMatch(rdsProxyEndpointMatches, host, RDS_PROXY_ENDPOINT_PATTERNS);
+  }
 
+  private static HostMatch getHostMatch(
+      final Map<String, HostMatch> cache, final String host, final Pattern[] patterns) {
+    final @Nullable HostMatch cached = cache.get(host);
+    if (cached != null) {
+      return cached;
+    }
+    // Match outside the map so the regular expressions don't run while holding a ConcurrentHashMap bin lock.
+    // Matching is deterministic, so a concurrent caller computing the same result is harmless.
+    final HostMatch match = findMatch(host, patterns);
+    final @Nullable HostMatch existing = cache.putIfAbsent(host, match);
+    return existing == null ? match : existing;
+  }
+
+  private static HostMatch findMatch(final String host, final Pattern[] patterns) {
+    for (Pattern pattern : patterns) {
+      final Matcher matcher = pattern.matcher(host);
+      if (matcher.find()) {
+        return new HostMatch(
+            getRegexGroup(matcher, INSTANCE_GROUP),
+            getRegexGroup(matcher, DNS_GROUP),
+            getRegexGroup(matcher, DOMAIN_GROUP),
+            getRegexGroup(matcher, REGION_GROUP));
+      }
+    }
+    return HostMatch.NO_MATCH;
+  }
+
+  private static @Nullable String getRegexGroup(final Matcher matcher, final String groupName) {
     try {
       return matcher.group(groupName);
     } catch (IllegalStateException | IllegalArgumentException e) {
+      // Not every pattern defines every group: the global writer pattern has no region group.
       return null;
     }
   }
@@ -536,21 +535,12 @@ public class RdsUtils {
     if (StringUtils.isNullOrEmpty(host)) {
       return null;
     }
-    final String cached = cachedDnsPatterns.get(host);
-    if (cached != null) {
-      return cached;
-    }
-    final Matcher matcher = cacheMatcher(host, RDS_DNS_PATTERNS);
-    final String group = getRegexGroup(matcher, DNS_GROUP);
-    if (group != null) {
-      cachedDnsPatterns.put(host, group);
-    }
-    return group;
+    return getRdsDnsMatch(host).dns;
   }
 
   public static void clearCache() {
-    cachedPatterns.clear();
-    cachedDnsPatterns.clear();
+    rdsDnsMatches.clear();
+    rdsProxyEndpointMatches.clear();
   }
 
   public static void setPrepareHostFunc(final Function<String, String> func) {
@@ -568,5 +558,26 @@ public class RdsUtils {
     }
     final String preparedHost = func.apply(host);
     return preparedHost == null ? host : preparedHost;
+  }
+
+  /** The named groups of the first pattern in a list that matched a host, or NO_MATCH if none did. */
+  private static final class HostMatch {
+    static final HostMatch NO_MATCH = new HostMatch(null, null, null, null);
+
+    final @Nullable String instance;
+    final @Nullable String dns;
+    final @Nullable String domain;
+    final @Nullable String region;
+
+    HostMatch(
+        final @Nullable String instance,
+        final @Nullable String dns,
+        final @Nullable String domain,
+        final @Nullable String region) {
+      this.instance = instance;
+      this.dns = dns;
+      this.domain = domain;
+      this.region = region;
+    }
   }
 }

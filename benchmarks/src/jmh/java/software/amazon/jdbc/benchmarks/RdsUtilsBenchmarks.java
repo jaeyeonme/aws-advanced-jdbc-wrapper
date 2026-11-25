@@ -45,9 +45,9 @@ import software.amazon.jdbc.util.RdsUtils;
  * under failover and read/write splitting that it is worth knowing the number. It was not measured
  * before.
  *
- * <p>{@code RdsUtils} keeps a static cache of {@link java.util.regex.Matcher} results keyed by host.
- * That makes the cached and uncached costs differ by orders of magnitude, and it means a naive
- * benchmark measures only the cache. Both are measured here:
+ * <p>{@code RdsUtils} keeps static caches of match results keyed by host, including hosts that match
+ * nothing. That makes the cached and uncached costs differ by orders of magnitude, and it means a
+ * naive benchmark measures only the cache. Both are measured here:
  *
  * <ul>
  *   <li>{@code cachedHit*} - repeat lookups of one host, the steady state.
@@ -57,7 +57,7 @@ import software.amazon.jdbc.util.RdsUtils;
  * </ul>
  *
  * <p>{@code contendedCachedHit} runs the cached path on several threads to check that the shared
- * static cache does not serialise callers, which a single-threaded benchmark cannot show.
+ * static caches do not serialise callers, which a single-threaded benchmark cannot show.
  */
 @State(Scope.Benchmark)
 @Fork(1)
@@ -136,8 +136,8 @@ public class RdsUtilsBenchmarks {
   }
 
   /**
-   * A non-RDS host matches none of the patterns, so it is the worst case for the classifier: every
-   * pattern is tried before it gives up.
+   * A non-RDS host matches none of the patterns. The first lookup tries every pattern before it
+   * gives up; later lookups read the cached miss instead of matching again.
    */
   @Benchmark
   public RdsUrlType cachedHitIdentifyNonRds() {
@@ -155,6 +155,10 @@ public class RdsUtilsBenchmarks {
     return rdsUtils.identifyRdsType("instance-" + (counter++) + ".XYZ.us-east-2.rds.amazonaws.com");
   }
 
+  /**
+   * Misses are cached, so every invocation adds an entry to both caches, and the measured cost
+   * includes the maps growing during the run.
+   */
   @Benchmark
   public RdsUrlType uncachedIdentifyNonRds() {
     return rdsUtils.identifyRdsType("host-" + (counter++) + ".example.com");
@@ -207,7 +211,7 @@ public class RdsUtilsBenchmarks {
 
   /**
    * Blue/green routing calls this on every host it evaluates, and unlike the classifier results it
-   * is not backed by the matcher cache.
+   * is not backed by the match cache.
    */
   @Benchmark
   public boolean isGreenInstance() {

@@ -18,6 +18,7 @@ package software.amazon.jdbc.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -498,6 +499,39 @@ public class RdsUtilsTests {
   public void testisRdsProxyEndpointDns() {
     assertFalse(target.isRdsProxyEndpointDns(usEastRegionProxy));
     assertTrue(target.isRdsProxyEndpointDns(usEastRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testIsRdsProxyEndpointDnsAfterIsRdsDns() {
+    target.isRdsDns(usEastRegionCluster);
+    assertFalse(target.isRdsProxyEndpointDns(usEastRegionCluster));
+  }
+
+  @Test
+  public void testGetRdsClusterIdAfterIsRdsProxyEndpointDns() {
+    final String clusterId = target.getRdsClusterId(usEastRegionProxyEndpoint);
+    assertNotNull(clusterId);
+    RdsUtils.clearCache();
+
+    target.isRdsProxyEndpointDns(usEastRegionProxyEndpoint);
+    assertEquals(clusterId, target.getRdsClusterId(usEastRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testIdentifyRdsTypeForProxyEndpoint() {
+    // identifyRdsType() checks isRdsProxyDns() first, and the Aurora patterns match a proxy endpoint host with a
+    // "proxy-" DNS group, so the host is reported as RDS_PROXY. Callers treat both proxy types the same way.
+    assertEquals(RdsUrlType.RDS_PROXY, target.identifyRdsType(usEastRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testRepeatedLookupsForHostsThatMatchNothing() {
+    final String nonRdsHost = "my-database.example.com";
+    for (int i = 0; i < 2; i++) {
+      assertEquals(RdsUrlType.OTHER, target.identifyRdsType(nonRdsHost));
+      assertNull(target.getRdsRegion(nonRdsHost));
+      assertEquals("us-east-2", target.getRdsRegion(usEastRegionElbUrl));
+    }
   }
 
   @Test
