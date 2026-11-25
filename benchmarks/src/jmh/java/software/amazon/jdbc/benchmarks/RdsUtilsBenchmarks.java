@@ -156,8 +156,8 @@ public class RdsUtilsBenchmarks {
   }
 
   /**
-   * Misses are cached, so every invocation adds an entry to both caches, and the measured cost
-   * includes the maps growing during the run.
+   * Misses are cached, so every invocation adds an entry to the cache, and the measured cost
+   * includes the map growing during the run.
    */
   @Benchmark
   public RdsUrlType uncachedIdentifyNonRds() {

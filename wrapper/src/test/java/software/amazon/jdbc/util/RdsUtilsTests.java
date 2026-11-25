@@ -50,6 +50,12 @@ public class RdsUtilsTests {
       "proxy-test-name.PROXY-XYZ.us-east-2.rds.amazonaws.com";
   private static final String usEastRegionCustomDomainMixedCase =
       "custom-test-name.CLUSTER-CUSTOM-XYZ.us-east-2.rds.amazonaws.com";
+  private static final String usEastRegionProxyEndpointMixedCase =
+      "endpoint-test-name.ENDPOINT.PROXY-XYZ.us-east-2.rds.amazonaws.com";
+  private static final String chinaRegionProxyEndpoint =
+      "endpoint-test-name.endpoint.proxy-XYZ.rds.cn-northwest-1.amazonaws.com.cn";
+  private static final String oldChinaRegionProxyEndpoint =
+      "endpoint-test-name.endpoint.proxy-XYZ.cn-northwest-1.rds.amazonaws.com.cn";
 
   private static final String euRedshift =
       "redshift-test-name.XYZ.eusc-de-east-1.rds.amazonaws.eu";
@@ -499,6 +505,17 @@ public class RdsUtilsTests {
   public void testisRdsProxyEndpointDns() {
     assertFalse(target.isRdsProxyEndpointDns(usEastRegionProxy));
     assertTrue(target.isRdsProxyEndpointDns(usEastRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testIsRdsProxyEndpointDnsForChinaRegions() {
+    assertTrue(target.isRdsProxyEndpointDns(chinaRegionProxyEndpoint));
+    assertTrue(target.isRdsProxyEndpointDns(oldChinaRegionProxyEndpoint));
+  }
+
+  @Test
+  public void testMixedCaseProxyEndpointDns() {
+    assertTrue(target.isRdsProxyEndpointDns(usEastRegionProxyEndpointMixedCase));
   }
 
   @Test

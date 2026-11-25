@@ -230,16 +230,19 @@ public class RdsUtils {
               + "\\.rds\\.amazonaws\\.com\\.cn\\.?)$",
           Pattern.CASE_INSENSITIVE);
 
+  // isRdsProxyEndpointDns() skips these patterns for hosts without ENDPOINT_LABEL, so each of them must require it.
   private static final Pattern[] RDS_PROXY_ENDPOINT_PATTERNS = {
       RDS_PROXY_ENDPOINT_DNS_PATTERN,
       RDS_PROXY_ENDPOINT_CHINA_DNS_PATTERN,
       RDS_PROXY_ENDPOINT_OLD_CHINA_DNS_PATTERN};
 
   // One cache per pattern list, so a result is only ever read by lookups that use the same patterns. Hosts that
-  // match nothing are cached as HostMatch.NO_MATCH. The maps are unbounded.
+  // match nothing are cached as HostMatch.NO_MATCH, except that the proxy endpoint cache only sees hosts containing
+  // ENDPOINT_LABEL. The maps are unbounded.
   private static final Map<String, HostMatch> rdsDnsMatches = new ConcurrentHashMap<>();
   private static final Map<String, HostMatch> rdsProxyEndpointMatches = new ConcurrentHashMap<>();
 
+  private static final String ENDPOINT_LABEL = ".endpoint.";
   private static final String INSTANCE_GROUP = "instance";
   private static final String DNS_GROUP = "dns";
   private static final String DOMAIN_GROUP = "domain";
@@ -273,7 +276,8 @@ public class RdsUtils {
 
   public boolean isRdsProxyEndpointDns(final String host) {
     final String preparedHost = getPreparedHost(host);
-    if (StringUtils.isNullOrEmpty(preparedHost)) {
+    // Every proxy endpoint pattern requires ".endpoint.", so other hosts skip the patterns and the cache.
+    if (StringUtils.isNullOrEmpty(preparedHost) || !hasEndpointLabel(preparedHost)) {
       return false;
     }
 
@@ -529,6 +533,16 @@ public class RdsUtils {
       // Not every pattern defines every group: the global writer pattern has no region group.
       return null;
     }
+  }
+
+  private static boolean hasEndpointLabel(final String host) {
+    // The label starts with a dot, so only dot positions need comparing.
+    for (int i = host.indexOf('.'); i >= 0; i = host.indexOf('.', i + 1)) {
+      if (host.regionMatches(true, i, ENDPOINT_LABEL, 0, ENDPOINT_LABEL.length())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private @Nullable String getDnsGroup(final String host) {
